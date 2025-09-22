@@ -4,7 +4,7 @@ import pandas as pd
 # Cargar el Excel (ajustar el nombre a tu archivo real)
 @st.cache_data
 def load_data():
-    xls = pd.ExcelFile("data/mis_datos.xlsx")
+    xls = pd.ExcelFile("matriculas.xlsx")
     data = {
         "MATRICULA": xls.parse("MATRICULA"),
         "SUCURSALES": xls.parse("SUCURSALES"),
