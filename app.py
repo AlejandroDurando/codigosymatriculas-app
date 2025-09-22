@@ -6,7 +6,7 @@ import pandas as pd
 def load_data():
     xls = pd.ExcelFile("matriculas.xlsx")
     data = {
-        "MATRICULA": xls.parse("MATRICULA"),
+        "MATRICULAS": xls.parse("MATRICULAS"),
         "SUCURSALES": xls.parse("SUCURSALES"),
         "COMPRAS": xls.parse("COMPRAS"),
         "AGENCIAS": xls.parse("AGENCIAS"),
@@ -22,7 +22,7 @@ st.title("🔎 Buscador de Materiales y Códigos")
 # Selector de pestaña
 sheet = st.selectbox(
     "Elegí la categoría:",
-    ["MATRICULA", "SUCURSALES", "COMPRAS", "AGENCIAS", "MOVILIDADES"]
+    ["MATRICULAS", "SUCURSALES", "COMPRAS", "AGENCIAS", "MOVILIDADES"]
 )
 
 # Buscador
