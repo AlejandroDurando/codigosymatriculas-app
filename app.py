@@ -1,13 +1,25 @@
 import streamlit as st
 import pandas as pd
 import re
+import unicodedata
 
-# ---------- Utilidades ----------
+# ---------- Helpers de normalización ----------
+def strip_accents(s: str) -> str:
+    """Quita tildes/diacríticos."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(s))
+        if unicodedata.category(c) != "Mn"
+    )
+
+def norm(s) -> str:
+    """Normaliza para comparar: sin tildes, minúsculas, trim."""
+    return strip_accents(str(s)).lower().strip()
+
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # Quita espacios y pasa a mayúsculas para evitar errores por tildes/espacios
+    # Quita espacios y pasa a mayúsculas para evitar errores por variantes
     mapping = {c: c.strip().upper() for c in df.columns}
     df = df.rename(columns=mapping)
-    # Normaliza variantes con/ sin tilde
+    # Normaliza variantes con/sin tilde o espacios
     if "CÓDIGO" in df.columns and "CODIGO" not in df.columns:
         df = df.rename(columns={"CÓDIGO": "CODIGO"})
     if "DESCRIPCIÓN" in df.columns and "DESCRIPCION" not in df.columns:
@@ -28,13 +40,52 @@ def load_data():
     }
     return data
 
-def highlight(text, q):
+# ---------- Resaltado ignorando tildes ----------
+def highlight(text: str, q: str) -> str:
+    """
+    Resalta coincidencias de q en text ignorando tildes y mayúsculas/minúsculas,
+    conservando el texto original.
+    """
     if not q:
         return str(text)
-    return re.compile(re.escape(q), re.I).sub(
-        lambda m: f"<mark style='background:yellow;color:black;font-weight:600'>{m.group(0)}</mark>",
-        str(text),
-    )
+
+    original = str(text)
+
+    # Construimos una versión sin tildes + un mapa de índices al original
+    norm_chars = []
+    index_map = []  # index_map[i_norm] = i_original
+    for i, ch in enumerate(original):
+        decomp = unicodedata.normalize("NFD", ch)
+        for d in decomp:
+            if unicodedata.category(d) != "Mn":
+                norm_chars.append(d)
+                index_map.append(i)
+    norm_text = "".join(norm_chars).lower()
+    norm_q = norm(q)
+
+    if not norm_q:
+        return original
+
+    pattern = re.compile(re.escape(norm_q), re.IGNORECASE)
+    result = []
+    last_orig = 0
+
+    for m in pattern.finditer(norm_text):
+        # m.start/end están en el string normalizado → mapeamos al original
+        start_norm, end_norm = m.start(), m.end()
+        start_orig = index_map[start_norm]
+        end_orig = index_map[end_norm - 1] + 1  # fin exclusivo
+
+        result.append(original[last_orig:start_orig])
+        result.append(
+            f"<mark style='background:yellow;color:black;font-weight:600'>"
+            f"{original[start_orig:end_orig]}"
+            f"</mark>"
+        )
+        last_orig = end_orig
+
+    result.append(original[last_orig:])
+    return "".join(result)
 
 # ---------- Palabras clave -> código ----------
 keyword_map = {
@@ -78,11 +129,12 @@ if modo == "CÓDIGOS":
     categoria = st.selectbox("Elegí la categoría:", ["SUCURSALES", "AGENCIAS", "COMPRAS", "MOVILIDADES"])
     df = data[categoria]
     q = st.text_input("Escribí el número o una palabra para buscar:")
-    if q:
-        ql = q.lower().strip()
 
-        # 1) Coincidencias por palabras clave (parcial)
-        matches = [(phrase, code) for phrase, code in keyword_map.items() if ql in phrase.lower()]
+    if q:
+        qn = norm(q)  # <-- sin tildes, lowercase
+
+        # 1) Coincidencias por palabras clave (parcial, ignorando tildes)
+        matches = [(phrase, code) for phrase, code in keyword_map.items() if qn in norm(phrase)]
 
         if matches:
             for phrase, code in matches:
@@ -101,13 +153,15 @@ if modo == "CÓDIGOS":
                 else:
                     st.warning(f"La palabra clave '{phrase}' apunta al código {code}, pero no existe en **{categoria}**.")
 
-        # 2) Búsqueda normal en código/descr.
-        mask = df.apply(lambda r: ql in str(r.get("CODIGO","")).lower() or ql in str(r.get("DESCRIPCION","")).lower(), axis=1)
+        # 2) Búsqueda normal en código/descr. (ignorando tildes)
+        mask = df.apply(
+            lambda r: qn in norm(r.get("CODIGO","")) or qn in norm(r.get("DESCRIPCION","")),
+            axis=1
+        )
         results = df[mask]
 
         if not results.empty:
-            if len(results) == 1:
-                r = results.iloc[0]
+            for _, r in results.iterrows():
                 st.markdown(
                     f"""
                     <div style="background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:14px;margin:10px 0">
@@ -117,17 +171,6 @@ if modo == "CÓDIGOS":
                     """,
                     unsafe_allow_html=True
                 )
-            else:
-                for _, r in results.iterrows():
-                    st.markdown(
-                        f"""
-                        <div style="background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:14px;margin:10px 0">
-                          <h4 style="color:#00ffc8;margin:0 0 6px">📌 Código {r['CODIGO']}</h4>
-                          <div style="color:#fff">{highlight(r['DESCRIPCION'], q)}</div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
         elif not matches:
             st.warning("⚠️ No se encontraron resultados.")
 
@@ -135,8 +178,12 @@ else:  # MATRÍCULAS
     df = data["MATRICULAS"]
     q = st.text_input("Escribí número de matrícula o parte del material:")
     if q:
-        ql = q.lower().strip()
-        mask = df.apply(lambda r: ql in str(r.get("MATRICULA","")).lower() or ql in str(r.get("MATERIAL","")).lower(), axis=1)
+        qn = norm(q)  # <-- sin tildes
+
+        mask = df.apply(
+            lambda r: qn in norm(r.get("MATRICULA","")) or qn in norm(r.get("MATERIAL","")),
+            axis=1
+        )
         results = df[mask]
 
         if not results.empty:
